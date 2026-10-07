@@ -99,6 +99,11 @@ create table if not exists public.refs (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- 링크 없이 사진·내용만 올리는 레퍼런스 (2026-10-08 추가)
+alter table public.refs alter column url drop not null;
+alter table public.refs add column if not exists photos text[] not null default '{}';
+alter table public.refs drop constraint if exists refs_photo_limit;
+alter table public.refs add constraint refs_photo_limit check (cardinality(photos) <= 10);
 create index if not exists refs_created_idx  on public.refs (created_at desc);
 create index if not exists refs_industry_idx on public.refs using gin (industry);
 create index if not exists refs_types_idx    on public.refs using gin (types);

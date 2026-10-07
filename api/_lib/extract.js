@@ -99,3 +99,20 @@ export function fallbackSummary(meta, text) {
   const l2 = (sentences[1] || '').slice(0, 60);
   return l2 ? `${l1}\n${l2}` : l1;
 }
+
+// 유튜브 영상 ID 추출 (youtu.be, watch, shorts, live, embed)
+export function youtubeId(raw) {
+  let u;
+  try { u = new URL(raw); } catch { return null; }
+  const host = u.hostname.replace(/^www\.|^m\.|^music\./, '');
+  let id = null;
+  if (host === 'youtu.be') id = u.pathname.split('/')[1];
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    if (u.pathname === '/watch') id = u.searchParams.get('v');
+    else {
+      const m = u.pathname.match(/^\/(shorts|live|embed|v)\/([^/?#]+)/);
+      if (m) id = m[2];
+    }
+  }
+  return id && /^[\w-]{11}$/.test(id) ? id : null;
+}

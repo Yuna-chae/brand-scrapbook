@@ -240,6 +240,7 @@ function route() {
   const p = path.split('/').filter(Boolean);
   if (p[0] === 'refs' && p[1] === 'new') return refForm(null, q.get('url') || '');
   if (p[0] === 'refs' && p[2] === 'edit') return refForm(Number(p[1]));
+  if (p[0] === 'refs' && p[1]) return refDetail(Number(p[1]));
   if (p[0] === 'visits' && p[1] === 'new') return visitForm(null);
   if (p[0] === 'visits' && p[2] === 'edit') return visitForm(Number(p[1]));
   if (p[0] === 'visits' && p[1]) return visitDetail(Number(p[1]));
@@ -265,86 +266,172 @@ function refFeed() {
   pager({
     list: $('#list'), sentinel: $('#sent'),
     load: (a, b) => {
-      let q = sb.from('refs').select('id,url,title,summary,image_url,site_name,industry,types,author_id,created_at').order('created_at', { ascending: false }).range(a, b);
+      let q = sb.from('refs').select('*').order('created_at', { ascending: false }).range(a, b);
       if (f.ind) q = q.contains('industry', [f.ind]);
       if (f.type) q = q.contains('types', [f.type]);
       return q;
     },
     render: refCard,
-    empty: `<div class="empty"><b>${f.ind || f.type ? '이 태그의 레퍼런스가 아직 없습니다' : '첫 레퍼런스를 모아보세요'}</b>카톡방에 공유하던 링크를 + 버튼으로 붙여넣으면<br>대표 이미지와 요약 2줄이 자동으로 정리됩니다.</div>`,
+    empty: `<div class="empty"><b>${f.ind || f.type ? '이 태그의 레퍼런스가 아직 없습니다' : '첫 레퍼런스를 모아보세요'}</b>+ 버튼으로 카톡방에 공유하던 링크를 붙여넣거나<br>사진과 내용만 올려 모을 수 있습니다.</div>`,
   });
 }
+
+const MAX_REF_PHOTOS = 10;
+const isYouTube = (u) => /(^|\.)youtube\.com$|(^|\.)youtu\.be$/i.test((() => { try { return new URL(u).hostname; } catch { return ''; } })());
 
 function refCard(r) {
   const initial = esc((r.site_name || r.title || '·').trim()[0] || '·');
   const tags = [...(r.industry || []), ...(r.types || [])];
+  const photos = r.photos || [];
   const mine = r.author_id === S.me.id;
+  const thumb = photos[0] ? photoUrl(thumbOf(photos[0])) : r.image_url;
+  // 링크만 있는 카드는 원문으로 바로, 사진·메모가 있는 카드는 상세로
+  const external = r.url && !photos.length;
+  const href = external ? safeHref(r.url) : `#/refs/${r.id}`;
+  const badge = external ? '원문 ↗' : photos.length ? `사진 ${photos.length}장 ›` : '자세히 ›';
   return `<article class="ref">
-    <a class="ref-link" href="${esc(safeHref(r.url))}" target="_blank" rel="noopener noreferrer">
-      <div class="thumb">${r.image_url ? `<img src="${esc(r.image_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback="${initial}">` : initial}</div>
+    <a class="ref-link" href="${esc(href)}"${external ? ' target="_blank" rel="noopener noreferrer"' : ''}>
+      <div class="thumb">${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fallback="${initial}">` : initial}</div>
       <div class="ref-body">
-        <div class="ref-title">${esc(r.title || r.url)}</div>
+        <div class="ref-title">${esc(r.title || r.url || '제목 없음')}</div>
         ${r.summary ? `<div class="ref-sum">${esc(r.summary)}</div>` : ''}
         ${tags.length ? `<div class="tags">${tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
-        <div class="meta"><span>${esc(person(r.author_id).name)} · ${fmtDate(r.created_at)}${r.site_name ? ` · ${esc(r.site_name)}` : ''}</span><b>원문 ↗</b></div>
+        <div class="meta"><span>${esc(person(r.author_id).name)} · ${fmtDate(r.created_at)}${r.site_name ? ` · ${esc(r.site_name)}` : ''}</span><b>${badge}</b></div>
       </div>
     </a>
     ${mine ? `<a class="ref-more" href="#/refs/${r.id}/edit" aria-label="수정">${ICON.more()}</a>` : ''}
   </article>`;
 }
 
+async function refDetail(id) {
+  setView(`<div class="bar"><a class="icon-btn" href="#/refs" aria-label="뒤로">${ICON.back()}</a></div><div class="loading">불러오는 중…</div>`);
+  const { data: r, error } = await sb.from('refs').select('*').eq('id', id).single();
+  if (error || !r) { toast('레퍼런스를 찾을 수 없습니다.'); location.hash = '#/refs'; return; }
+  const photos = r.photos || [];
+  const tags = [...(r.industry || []), ...(r.types || [])];
+  const hero = photos[0] ? photoUrl(photos[0]) : r.image_url;
+  const mine = r.author_id === S.me.id;
+  setView(`<div class="bar"><a class="icon-btn" href="#/refs" aria-label="뒤로">${ICON.back()}</a>
+      ${mine ? `<a class="icon-btn" href="#/refs/${id}/edit" aria-label="수정">${ICON.more()}</a>` : ''}</div>
+    <article class="detail" style="padding-bottom:calc(110px + var(--safe-b))">
+      ${hero ? `<button class="hero d-img" style="border-radius:0;display:block" data-full="${esc(hero)}"><img src="${esc(hero)}" alt="" referrerpolicy="no-referrer" data-fallback=""></button>` : ''}
+      <div class="d-body">
+        ${tags.length ? `<div class="tags">${tags.map(t => `<span class="tag d-tag" style="align-self:auto">${esc(t)}</span>`).join('')}</div>` : ''}
+        <h1 style="font-size:21px;line-height:1.4">${esc(r.title || '제목 없음')}</h1>
+        <div class="author">${avatar(r.author_id)}<div><div class="a-name">${esc(person(r.author_id).name)}</div>
+          <div class="a-sub">${fmtDate(r.created_at)}${r.site_name ? ` · ${esc(r.site_name)}` : ''}</div></div></div>
+        ${r.summary ? `<p class="d-text">${esc(r.summary)}</p>` : ''}
+        ${photos.slice(1).map(p => `<button class="d-img" data-full="${esc(photoUrl(p))}"><img src="${esc(photoUrl(p))}" alt="" loading="lazy" data-fallback=""></button>`).join('')}
+      </div>
+    </article>
+    ${r.url ? `<div class="bottom-cta"><a class="cta" style="text-decoration:none" href="${esc(safeHref(r.url))}" target="_blank" rel="noopener noreferrer">원문 보기 ↗</a></div>` : ''}`);
+  $$('[data-full]').forEach(b => b.onclick = () => openViewer(b.dataset.full));
+}
+
 async function refForm(id, presetUrl = '') {
-  const st = { url: presetUrl, title: '', summary: '', image: '', site: '', industry: new Set(), types: new Set(), loaded: false, busy: false };
+  const st = {
+    url: presetUrl, title: '', summary: '', image: '', site: '', photos: [], industry: new Set(), types: new Set(),
+    busy: false, uploading: 0, fresh: new Set(), original: [], auto: { title: '', summary: '' }, aiNote: '',
+  };
   if (id) {
     const { data, error } = await sb.from('refs').select('*').eq('id', id).single();
     if (error || !data) { toast('레퍼런스를 찾을 수 없습니다.'); location.hash = '#/refs'; return; }
     if (data.author_id !== S.me.id) { toast('본인이 등록한 레퍼런스만 수정할 수 있습니다.'); location.hash = '#/refs'; return; }
-    Object.assign(st, { url: data.url, title: data.title || '', summary: data.summary || '', image: data.image_url || '', site: data.site_name || '', industry: new Set(data.industry), types: new Set(data.types), loaded: true });
+    Object.assign(st, {
+      url: data.url || '', title: data.title || '', summary: data.summary || '', image: data.image_url || '', site: data.site_name || '',
+      photos: (data.photos || []).map(path => ({ path })), industry: new Set(data.industry), types: new Set(data.types),
+    });
+    st.original = [...(data.photos || [])];
   }
+  const back = id ? `#/refs/${id}` : '#/refs';
 
-  setView(`<div class="bar"><a class="icon-btn" href="#/refs" aria-label="뒤로">${ICON.back()}</a><div class="bar-t">${id ? '레퍼런스 수정' : '레퍼런스 등록'}</div><div style="width:44px"></div></div>
+  setView(`<div class="bar"><button class="icon-btn" id="back" aria-label="뒤로">${ICON.back()}</button><div class="bar-t">${id ? '레퍼런스 수정' : '레퍼런스 등록'}</div><div style="width:44px"></div></div>
     <div class="form">
       <div>
-        <label class="lbl" for="url">링크</label>
-        <div style="display:flex;gap:8px"><input class="inp" id="url" type="url" inputmode="url" placeholder="https:// 링크를 붙여넣으세요" value="${esc(st.url)}" style="flex:1;min-width:0" ${id ? 'readonly' : ''}>
-        ${id ? '' : '<button class="btn-dark" id="fetch">불러오기</button>'}</div>
+        <label class="lbl" for="url">링크 <span>· 선택</span></label>
+        <div style="display:flex;gap:8px"><input class="inp" id="url" type="url" inputmode="url" placeholder="https:// 링크를 붙여넣으세요" value="${esc(st.url)}" style="flex:1;min-width:0">
+        <button class="btn-dark" id="fetch">불러오기</button></div>
         <div id="dup" style="margin-top:8px" hidden></div>
+        <p class="note" style="margin-top:8px">링크를 붙여넣으면 대표 이미지·제목·요약을 자동으로 채웁니다. 링크 없이 사진과 내용만 올려도 됩니다.</p>
       </div>
       <div id="pv"></div>
+      <div>
+        <div class="lbl">사진 <span>· 선택 · 최대 ${MAX_REF_PHOTOS}장 · 눌러서 대표 지정</span></div>
+        <div class="grid4" id="phs"></div>
+        <input id="rfiles" type="file" accept="image/*" multiple class="sr">
+      </div>
+      <div><label class="lbl" for="title">제목</label><input class="inp" id="title" maxlength="200" placeholder="무엇에 관한 레퍼런스인가요?" value="${esc(st.title)}"></div>
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label for="sum" class="lbl" style="margin:0">요약·내용 <span>· 직접 수정 가능</span></label>
+          <button class="link-btn" id="regen" hidden>AI로 다시 요약</button></div>
+        <textarea class="ta" id="sum" rows="3" placeholder="좋았던 점, 참고할 포인트를 적어주세요.">${esc(st.summary)}</textarea>
+        <div id="aiNote"></div>
+      </div>
       <div id="tagbox"></div>
       ${id ? '<button class="danger-btn" id="del">이 레퍼런스 삭제</button>' : ''}
     </div>
-    <div class="bottom-cta"><button class="cta" id="save" ${st.loaded ? '' : 'disabled'}>${id ? '수정 완료' : '저장하기'}</button></div>`);
+    <div class="bottom-cta"><button class="cta" id="save">${id ? '수정 완료' : '저장하기'}</button></div>`);
+
+  const sum = $('#sum');
+  const growSum = () => { sum.style.height = 'auto'; sum.style.height = (sum.scrollHeight + 2) + 'px'; };
+  sum.oninput = () => { st.summary = sum.value; growSum(); };
+  $('#title').oninput = (e) => { st.title = e.target.value; };
+  const syncSave = () => { $('#save').disabled = st.busy || st.uploading > 0; };
 
   const drawPreview = () => {
-    if (!st.loaded) {
-      $('#pv').innerHTML = st.busy
-        ? `<div class="preview"><div class="preview-img skel" style="border-radius:0"></div><div class="preview-body"><div class="skel" style="height:18px;width:80%"></div><div class="skel" style="height:44px"></div><p class="note">링크를 읽고 요약하는 중입니다…</p></div></div>`
-        : `<p class="note">카톡방에서 복사한 링크를 붙여넣으면 대표 이미지·제목·요약 2줄을 자동으로 채웁니다. 인스타그램처럼 외부 접근을 막는 사이트는 직접 입력할 수 있습니다.</p>`;
+    $('#regen').hidden = !st.url || st.busy;
+    $('#aiNote').innerHTML = st.aiNote ? `<p class="note" style="margin-top:6px">${esc(st.aiNote)}</p>` : '';
+    if (st.busy) {
+      $('#pv').innerHTML = `<div class="preview"><div class="preview-img skel" style="border-radius:0"></div><div class="preview-body"><div class="skel" style="height:18px;width:80%"></div><div class="skel" style="height:40px"></div>
+        <p class="note">${isYouTube(st.url) ? '영상 내용을 보고 요약하는 중입니다. 30초 정도 걸릴 수 있어요…' : '링크를 읽고 요약하는 중입니다…'}</p></div></div>`;
       return;
     }
+    if (!st.url && !st.image) { $('#pv').innerHTML = ''; return; }
     $('#pv').innerHTML = `<div class="preview">
-      <div class="preview-img">${st.image ? `<img src="${esc(st.image)}" alt="" referrerpolicy="no-referrer" data-fallback="">` : '대표 이미지 없음'}</div>
-      <div class="preview-body">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:-6px">
-          <span class="note">${esc(st.site)}</span><button class="link-btn" id="imgEdit">이미지 주소 변경</button></div>
-        <input class="inp" id="imgUrl" placeholder="이미지 주소(https://…)" value="${esc(st.image)}" hidden>
-        <div><label class="sr" for="title">제목</label><input class="title-inp" id="title" placeholder="제목" value="${esc(st.title)}"></div>
-        <div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <label for="sum" style="font-size:12px;font-weight:600">요약 2줄 · 직접 수정 가능</label>
-            <button class="link-btn" id="regen">다시 생성</button></div>
-          <textarea class="ta" id="sum" rows="3" placeholder="요약 첫째 줄&#10;요약 둘째 줄">${esc(st.summary)}</textarea>
-        </div>
+      <div class="preview-img">${st.image ? `<img src="${esc(st.image)}" alt="" referrerpolicy="no-referrer" data-fallback="">` : '링크 대표 이미지 없음'}</div>
+      <div class="preview-body" style="gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:-4px 0">
+          <span class="note">${esc(st.site)}${st.photos.length ? ' · 카드에는 올린 사진이 먼저 보입니다' : ''}</span><button class="link-btn" id="imgEdit">이미지 주소 변경</button></div>
+        <input class="inp" id="imgUrl" placeholder="이미지 주소(https://…), 비우면 이미지 없음" value="${esc(st.image)}" hidden>
       </div></div>`;
-    $('#title').oninput = (e) => { st.title = e.target.value; };
-    const sum = $('#sum');
-    const growSum = () => { sum.style.height = 'auto'; sum.style.height = (sum.scrollHeight + 2) + 'px'; };
-    sum.oninput = (e) => { st.summary = e.target.value; growSum(); };
-    growSum();
     $('#imgEdit').onclick = () => { const i = $('#imgUrl'); i.hidden = !i.hidden; if (!i.hidden) i.focus(); };
     $('#imgUrl').onchange = (e) => { st.image = e.target.value.trim(); drawPreview(); };
-    $('#regen').onclick = () => fetchPreview(true);
+  };
+
+  const drawPhotos = () => {
+    $('#phs').innerHTML = (st.photos.length < MAX_REF_PHOTOS ? `<label class="ph addph" for="rfiles">${ICON.camera()}추가</label>` : '') +
+      st.photos.map((p, i) => `<div class="ph${i === 0 ? ' cover' : ''}${p.path ? '' : ' up'}">
+        <button class="ph-img" data-pick="${i}" aria-label="${i === 0 ? '대표 사진' : '대표로 지정'}"><img src="${esc(p.local || photoUrl(thumbOf(p.path)))}" alt=""></button>
+        ${i === 0 ? '<span class="c">대표</span>' : ''}
+        ${p.error ? '<span class="c" style="background:var(--danger)">실패</span>' : ''}
+        <button class="ph-rm" data-rm="${i}" aria-label="사진 삭제">${ICON.close('#fff')}</button></div>`).join('');
+    $$('#phs [data-pick]').forEach(b => b.onclick = () => { const i = +b.dataset.pick; if (i) { st.photos.unshift(...st.photos.splice(i, 1)); drawPhotos(); } });
+    $$('#phs [data-rm]').forEach(b => b.onclick = () => {
+      const [p] = st.photos.splice(+b.dataset.rm, 1);
+      if (p.path && st.fresh.has(p.path)) { removePhotos([p.path]); st.fresh.delete(p.path); }
+      drawPhotos();
+    });
+    syncSave();
+  };
+
+  $('#rfiles').onchange = async (e) => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    const room = MAX_REF_PHOTOS - st.photos.length;
+    if (room <= 0) return toast(`사진은 최대 ${MAX_REF_PHOTOS}장까지 올릴 수 있습니다.`);
+    if (files.length > room) toast(`최대 ${MAX_REF_PHOTOS}장까지라 ${room}장만 추가했습니다.`);
+    const picked = files.slice(0, room).map(f => ({ path: null, local: URL.createObjectURL(f), file: f }));
+    st.photos.push(...picked);
+    st.uploading += picked.length;
+    drawPhotos();
+    for (const p of picked) {
+      try { p.path = await uploadPhoto(p.file); st.fresh.add(p.path); }
+      catch (err) { console.error(err); p.error = true; }
+      st.uploading--;
+      if (!st.photos.includes(p) && p.path) { removePhotos([p.path]); st.fresh.delete(p.path); }
+      drawPhotos();
+    }
   };
 
   const drawTags = () => {
@@ -379,65 +466,90 @@ async function refForm(id, presetUrl = '') {
   };
 
   const checkDup = async (url) => {
-    if (id) return;
-    const { data } = await sb.from('refs').select('id,author_id,created_at').eq('url', url).limit(1);
+    const { data } = await sb.from('refs').select('id,author_id,created_at').eq('url', url).neq('id', id || 0).limit(1);
     const box = $('#dup');
     if (data?.length) { box.hidden = false; box.innerHTML = `<div class="warn">이미 ${esc(person(data[0].author_id).name)}님이 ${fmtDate(data[0].created_at)}에 등록한 링크입니다. 그래도 저장할 수 있습니다.</div>`; }
     else box.hidden = true;
   };
 
   const fetchPreview = async (onlySummary = false) => {
-    let url = $('#url').value.trim();
-    const m = url.match(/https?:\/\/[^\s<>"']+/);
+    const m = $('#url').value.trim().match(/https?:\/\/[^\s<>"']+/);
     if (!m) { toast('https://로 시작하는 링크를 넣어주세요.'); return; }
-    url = m[0];
+    const url = m[0];
     $('#url').value = url;
     st.url = url;
-    if (onlySummary) { $('#regen').textContent = '생성 중…'; $('#regen').disabled = true; }
-    else { st.busy = true; st.loaded = false; drawPreview(); $('#save').disabled = true; checkDup(url); }
+    st.busy = true; st.aiNote = '';
+    drawPreview(); syncSave();
+    if (!onlySummary) checkDup(url);
     try {
       const { data: { session } } = await sb.auth.getSession();
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 75000);
       const r = await fetch('/api/preview', {
-        method: 'POST',
+        method: 'POST', signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
         body: JSON.stringify({ url, tags: { industry: S.tags.industry, types: S.tags.type } }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || '불러오기 실패');
-      if (onlySummary) {
-        st.summary = j.summary || st.summary;
-      } else {
-        Object.assign(st, { title: j.title || '', summary: j.summary || '', image: j.image || '', site: j.siteName || '' });
+      }).finally(() => clearTimeout(timer));
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || '링크를 불러오지 못했습니다.');
+      // 사용자가 직접 고친 칸은 덮어쓰지 않습니다.
+      const titleUntouched = !st.title.trim() || st.title === st.auto.title;
+      const sumUntouched = onlySummary || !st.summary.trim() || st.summary === st.auto.summary;
+      if (!onlySummary) {
+        if (titleUntouched && j.title) { st.title = j.title; st.auto.title = j.title; $('#title').value = j.title; }
+        if (j.image) st.image = j.image;
+        st.site = j.siteName || st.site;
         (j.suggested?.industry || []).forEach(t => st.industry.add(t));
         (j.suggested?.types || []).forEach(t => st.types.add(t));
-        if (!j.fetched) toast('이 사이트는 내용을 읽을 수 없어요. 제목과 요약을 직접 입력해주세요.');
       }
+      if (sumUntouched && j.summary) { st.summary = j.summary; st.auto.summary = j.summary; sum.value = j.summary; growSum(); }
+      if (!j.ai) st.aiNote = `AI 요약을 만들지 못해 사이트 설명을 넣었습니다${j.aiError ? ` (${j.aiError})` : ''}. 직접 고쳐주세요.`;
+      else if (!j.fetched && !j.summary) st.aiNote = '이 사이트는 내용을 읽을 수 없어요. 제목과 내용을 직접 입력해주세요.';
     } catch (e) {
-      toast(e.message || '링크를 읽지 못했습니다. 직접 입력해주세요.');
-      if (!onlySummary) { try { st.site = new URL(url).hostname.replace(/^www\./, ''); } catch { /* noop */ } }
+      st.aiNote = e.name === 'AbortError' ? '응답이 너무 오래 걸려 중단했습니다. 다시 시도하거나 직접 입력해주세요.' : (e.message || '링크를 불러오지 못했습니다. 직접 입력해주세요.');
+      try { st.site = st.site || new URL(url).hostname.replace(/^www\./, ''); } catch { /* noop */ }
     }
-    st.busy = false; st.loaded = true;
-    drawPreview(); drawTags();
-    $('#save').disabled = false;
+    st.busy = false;
+    drawPreview(); drawTags(); syncSave();
   };
 
-  if (!id) {
-    $('#fetch').onclick = () => fetchPreview();
-    $('#url').addEventListener('paste', () => setTimeout(() => fetchPreview(), 0));
-    $('#url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); fetchPreview(); } });
-  }
-  drawPreview(); drawTags();
+  $('#fetch').onclick = () => fetchPreview();
+  $('#regen').onclick = () => fetchPreview(true);
+  $('#url').addEventListener('paste', () => setTimeout(() => fetchPreview(), 0));
+  $('#url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); fetchPreview(); } });
+  $('#url').addEventListener('change', (e) => { if (!e.target.value.trim()) { st.url = ''; st.image = ''; st.site = ''; $('#dup').hidden = true; drawPreview(); } });
+
+  $('#back').onclick = () => {
+    const dirty = st.fresh.size > 0 || (!id && (st.title.trim() || st.summary.trim() || st.url));
+    if (dirty && !confirm('작성 중인 내용을 버리고 나갈까요?')) return;
+    removePhotos([...st.fresh]);
+    location.hash = back;
+  };
+
+  drawPreview(); drawPhotos(); drawTags(); growSum();
   if (presetUrl && !id) fetchPreview();
+  cleanups.push(() => st.photos.forEach(p => p.local && URL.revokeObjectURL(p.local)));
 
   $('#save').onclick = async (e) => {
-    if (!st.url) return;
+    if (st.uploading) return toast('사진을 올리는 중입니다. 잠시만 기다려주세요.');
+    const url = ($('#url').value.trim().match(/https?:\/\/[^\s<>"']+/) || [''])[0];
+    const paths = st.photos.filter(p => p.path).map(p => p.path);
+    const title = st.title.trim();
+    if (!url && !paths.length && !st.summary.trim()) return toast('링크, 사진, 내용 중 하나는 넣어주세요.');
+    if (!title && !url) { toast('제목을 입력해주세요.'); $('#title').focus(); return; }
     e.currentTarget.disabled = true;
     const row = {
-      url: st.url, title: st.title.trim() || st.url, summary: st.summary.trim().split('\n').slice(0, 2).join('\n'),
-      image_url: st.image || null, site_name: st.site || null, industry: [...st.industry], types: [...st.types],
+      url: url || null, title: title || url, summary: st.summary.trim() || null,
+      image_url: url ? (st.image || null) : null, site_name: url ? (st.site || null) : null,
+      photos: paths, industry: [...st.industry], types: [...st.types],
     };
-    const { error } = id ? await sb.from('refs').update(row).eq('id', id) : await sb.from('refs').insert(row);
-    if (error) { e.currentTarget.disabled = false; toast('저장하지 못했습니다. 다시 시도해주세요.'); console.error(error); return; }
+    const res = id ? await sb.from('refs').update(row).eq('id', id).select('id').single() : await sb.from('refs').insert(row).select('id').single();
+    if (res.error) {
+      e.currentTarget.disabled = false; console.error(res.error);
+      return toast(/photos|null value in column "url"/.test(res.error.message || '') ? 'DB 업데이트(SQL)가 아직 적용되지 않았습니다. 관리자에게 알려주세요.' : '저장하지 못했습니다. 다시 시도해주세요.');
+    }
+    removePhotos(st.original.filter(p => !paths.includes(p)));
+    st.fresh.clear();
     toast(id ? '수정했습니다.' : '레퍼런스를 저장했습니다.');
     location.hash = '#/refs';
   };
@@ -445,6 +557,8 @@ async function refForm(id, presetUrl = '') {
     if (!confirm('이 레퍼런스를 삭제할까요?')) return;
     const { error } = await sb.from('refs').delete().eq('id', id);
     if (error) return toast('삭제하지 못했습니다.');
+    removePhotos(st.original);
+    st.fresh.size && removePhotos([...st.fresh]);
     toast('삭제했습니다.');
     location.hash = '#/refs';
   });
