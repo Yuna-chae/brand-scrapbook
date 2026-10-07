@@ -9,7 +9,8 @@ import { decodeHtml, extractMeta, extractText, normalizeUrl, fallbackSummary, yo
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || '').trim();
-const MODELS = [...new Set([process.env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash'].filter(Boolean))];
+const MODELS = [...new Set([process.env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'].filter(Boolean))];
+let DEADLINE = 0; // 요청당 AI에 쓸 수 있는 마감 시각 (Vercel 60초 제한 안쪽)
 
 const MAX_BYTES = 1_500_000;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
@@ -71,13 +72,16 @@ export default async function handler(req, res) {
 
   let ai = null;
   let aiError = '';
+  DEADLINE = Date.now() + 50000;
   if (!GEMINI_API_KEY) {
     aiError = 'Vercel에 GEMINI_API_KEY가 설정되지 않음';
   } else {
+    const errs = [];
     for (const run of attempts) {
       try { ai = await run(); break; }
-      catch (e) { aiError = friendly(e); console.warn('gemini failed', e?.message); }
+      catch (e) { errs.push(friendly(e)); console.warn('gemini failed', e?.message); }
     }
+    aiError = [...new Set(errs)].join(' / ');
   }
 
   res.setHeader('Cache-Control', 'no-store');
@@ -258,26 +262,35 @@ async function summarizeText(url, meta, text, tagLists) {
   return toResult(data, tagLists);
 }
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// 모델이 붐비거나(503·429) 없으면(404) 잠깐 기다렸다 다시, 그래도 안 되면 다음 모델로 넘어갑니다.
 async function gemini(body, timeoutMs) {
   let last;
   for (const model of MODELS) {
-    let r;
-    try {
-      r = await fetchWithTimeout(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
-        body: JSON.stringify(body),
-      }, timeoutMs);
-    } catch (e) {
-      const timeout = e?.name === 'AbortError';
-      throw Object.assign(new Error(timeout ? 'timeout' : String(e?.message)), { kind: timeout ? 'timeout' : 'network' });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const left = DEADLINE - Date.now();
+      if (left < 4000) throw last || Object.assign(new Error('timeout'), { kind: 'timeout' });
+      let r;
+      try {
+        r = await fetchWithTimeout(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+          body: JSON.stringify(body),
+        }, Math.min(timeoutMs, left - 1000));
+      } catch (e) {
+        const timeout = e?.name === 'AbortError';
+        throw Object.assign(new Error(timeout ? 'timeout' : String(e?.message)), { kind: timeout ? 'timeout' : 'network' });
+      }
+      if (r.ok) return r.json();
+      const msg = (await r.text()).slice(0, 400);
+      last = Object.assign(new Error(`Gemini ${model} HTTP ${r.status}: ${msg}`), { status: r.status, msg, model });
+      console.warn(last.message);
+      if (r.status === 400 && /API key/i.test(msg)) throw last;
+      if (r.status === 401 || r.status === 403) throw last;
+      if ((r.status === 503 || r.status === 500 || r.status === 429) && attempt === 0) { await sleep(1500); continue; }
+      break; // 다음 모델로
     }
-    if (r.ok) return r.json();
-    const msg = (await r.text()).slice(0, 300);
-    last = Object.assign(new Error(`Gemini ${model} HTTP ${r.status}: ${msg}`), { status: r.status, msg });
-    // 모델이 없거나 이 기능을 지원하지 않으면 다음 모델로
-    if (r.status === 404 || (r.status === 400 && !/API key/i.test(msg))) continue;
-    throw last;
   }
   throw last;
 }
@@ -302,10 +315,13 @@ function toResult(data, tagLists) {
 
 function friendly(e) {
   const s = e?.status, m = `${e?.msg || e?.message || ''}`;
+  let detail = '';
+  try { detail = JSON.parse(e?.msg || '').error?.message || ''; } catch { /* noop */ }
+  const tail = s ? ` · ${s}${detail ? ' ' + detail.slice(0, 70) : ''}` : '';
   if (e?.kind === 'timeout') return 'AI 응답 시간 초과';
   if (s === 400 && /API key/i.test(m)) return 'GEMINI_API_KEY 값이 올바르지 않음';
-  if (s === 401 || s === 403) return 'GEMINI_API_KEY 권한 오류';
-  if (s === 429) return 'AI 무료 사용량 초과, 잠시 후 다시 시도';
-  if (s >= 500) return 'AI 서버 일시 오류';
-  return 'AI 요약 실패';
+  if (s === 401 || s === 403) return `GEMINI_API_KEY 권한 오류${tail}`;
+  if (s === 429) return `AI 사용량 한도 초과${tail}`;
+  if (s >= 500) return `AI 서버 오류${tail}`;
+  return `AI 요약 실패${tail || ' · ' + m.slice(0, 60)}`;
 }
