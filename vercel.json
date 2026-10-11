@@ -3,6 +3,12 @@
   "functions": {
     "api/preview.js": {
       "maxDuration": 60
+    },
+    "api/notify.js": {
+      "maxDuration": 20
+    },
+    "api/cron-digest.js": {
+      "maxDuration": 60
     }
   },
   "headers": [
@@ -27,6 +33,12 @@
           "value": "strict-origin-when-cross-origin"
         }
       ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron-digest",
+      "schedule": "0 0 * * 1-5"
     }
   ]
 }

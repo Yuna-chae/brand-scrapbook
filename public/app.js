@@ -1,13 +1,13 @@
 // Supabase 라이브러리는 /vendor/supabase.js(공식 배포본 2.45.4)를 index.html에서 먼저 불러옵니다.
 const { createClient } = window.supabase;
-import { SUPABASE_URL, SUPABASE_ANON_KEY, PHOTO_BUCKET, MAX_PHOTOS } from './config.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, PHOTO_BUCKET, MAX_PHOTOS, VAPID_PUBLIC_KEY } from './config.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
 });
 
 // ───────────────────────── 공통 상태 · 유틸 ─────────────────────────
-const S = { session: null, me: null, people: new Map(), tags: { industry: [], type: [] }, refFilter: { ind: '', type: '' }, visitFilter: '' };
+const S = { unread: 0, session: null, me: null, people: new Map(), tags: { industry: [], type: [] }, refFilter: { ind: '', type: '' }, visitFilter: '' };
 const CATS = ['경쟁사', '삼성금융', '기타'];
 const view = document.getElementById('view');
 const nav = document.getElementById('nav');
@@ -99,6 +99,8 @@ const ICON = {
   up: () => '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>',
   down: () => '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
   trash: () => '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+  bell: () => '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/></svg>',
+  bellOff: () => '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.6 4.3A6 6 0 0 1 18 9c0 3.3.8 5.3 1.5 6.4M6.3 6.3A6 6 0 0 0 6 9c0 6-2.5 7.5-2.5 7.5H16.5"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/><path d="M3 3l18 18"/></svg>',
   google: () => '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.6 12.2c0-.8-.1-1.4-.2-2.1H12v4h6c-.3 1.4-1 2.5-2.2 3.3v2.7h3.5c2.1-1.9 3.3-4.7 3.3-7.9z"/><path fill="#34A853" d="M12 23c3 0 5.5-1 7.3-2.7l-3.5-2.7c-1 .7-2.3 1.1-3.8 1.1-2.9 0-5.4-2-6.3-4.6H2.1v2.8C3.9 20.5 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.7 14.1c-.2-.7-.4-1.4-.4-2.1s.1-1.4.4-2.1V7.1H2.1C1.4 8.6 1 10.2 1 12s.4 3.4 1.1 4.9l3.6-2.8z"/><path fill="#EA4335" d="M12 5.4c1.6 0 3.1.6 4.2 1.7l3.1-3.1C17.5 2.2 15 1 12 1 7.7 1 3.9 3.5 2.1 7.1l3.6 2.8C6.6 7.4 9.1 5.4 12 5.4z"/></svg>',
 };
 
@@ -110,13 +112,15 @@ function setView(html, { tab = null } = {}) {
   nav.hidden = !tab;
   $$('a[data-tab]', nav).forEach(a => a.classList.toggle('on', a.dataset.tab === tab));
   window.scrollTo(0, 0);
+  if (document.getElementById('bellBadge')) refreshBell();
 }
 
 function header(title, extra = '') {
   return `<header class="hdr">
     <div class="hdr-top">
       <div><div class="eyebrow">브랜드전략팀 · <span class="serif">Brand Scrapbook</span></div><h1>${esc(title)}</h1></div>
-      <a class="me-btn" href="#/me" aria-label="내 정보">${S.me?.avatar_url ? `<img src="${esc(S.me.avatar_url)}" alt="" referrerpolicy="no-referrer" data-fallback="${esc(initialOf(S.me.name))}">` : esc(initialOf(S.me?.name))}</a>
+      <div class="hdr-actions"><a class="bell" href="#/alerts" aria-label="알림">${ICON.bell()}<span class="bell-badge" id="bellBadge" ${S.unread ? '' : 'hidden'}>${S.unread > 99 ? '99+' : S.unread}</span></a>
+      <a class="me-btn" href="#/me" aria-label="내 정보">${S.me?.avatar_url ? `<img src="${esc(S.me.avatar_url)}" alt="" referrerpolicy="no-referrer" data-fallback="${esc(initialOf(S.me.name))}">` : esc(initialOf(S.me?.name))}</a></div>
     </div>${extra}
   </header>`;
 }
@@ -202,6 +206,7 @@ async function enter(session) {
     await loadPeople();
   }
   S.me = { id: session.user.id, email: session.user.email, ...person(session.user.id) };
+  if (pushSupported() && Notification.permission === 'granted') currentSub().then(sub => sub && saveSub(sub)).catch(() => {});
   const shared = consumeShare();
   if (shared) location.hash = `#/refs/new?url=${encodeURIComponent(shared)}`;
   route();
@@ -246,6 +251,7 @@ function route() {
   if (p[0] === 'visits' && p[1]) return visitDetail(Number(p[1]));
   if (p[0] === 'visits') return visitFeed();
   if (p[0] === 'me') return mePage();
+  if (p[0] === 'alerts') return alertsPage();
   return refFeed();
 }
 window.addEventListener('hashchange', route);
@@ -256,10 +262,10 @@ function refFeed() {
   const ind = ['', ...S.tags.industry].map(t => `<button class="chip${f.ind === t ? ' on' : ''}" data-ind="${esc(t)}">${t ? esc(t) : '전체'}</button>`).join('');
   const typ = ['', ...S.tags.type].map(t => `<button class="chip2${f.type === t ? ' on' : ''}" data-type="${esc(t)}">${t ? esc(t) : '전체'}</button>`).join('');
   setView(`${header('레퍼런스', `<div class="row" aria-label="업종">${ind}</div><div class="row" aria-label="성격">${typ}</div>`)}
-    ${installBanner()}
+    ${topBanner()}
     <div class="feed"><div id="list" style="display:flex;flex-direction:column;gap:12px"></div><div class="sentinel" id="sent"></div></div>
     <a class="fab" href="#/refs/new" aria-label="레퍼런스 등록">${ICON.plus()}</a>`, { tab: 'refs' });
-  bindInstall();
+  bindTopBanner();
   $$('[data-ind]').forEach(b => b.onclick = () => { S.refFilter.ind = b.dataset.ind; refFeed(); });
   $$('[data-type]').forEach(b => b.onclick = () => { S.refFilter.type = b.dataset.type; refFeed(); });
 
@@ -369,7 +375,7 @@ async function refForm(id, presetUrl = '') {
         <div id="aiNote"></div>
       </div>
       <div id="tagbox"></div>
-      ${id ? '<button class="danger-btn" id="del">이 레퍼런스 삭제</button>' : ''}
+      ${id ? '<button class="danger-btn" id="del">이 레퍼런스 삭제</button>' : quietRow('rquiet')}
     </div>
     <div class="bottom-cta"><button class="cta" id="save">${id ? '수정 완료' : '저장하기'}</button></div>`);
 
@@ -543,6 +549,7 @@ async function refForm(id, presetUrl = '') {
       image_url: url ? (st.image || null) : null, site_name: url ? (st.site || null) : null,
       photos: paths, industry: [...st.industry], types: [...st.types],
     };
+    if (!id) row.quiet = !!$('#rquiet')?.checked;
     const res = id ? await sb.from('refs').update(row).eq('id', id).select('id').single() : await sb.from('refs').insert(row).select('id').single();
     if (res.error) {
       e.currentTarget.disabled = false; console.error(res.error);
@@ -550,7 +557,8 @@ async function refForm(id, presetUrl = '') {
     }
     removePhotos(st.original.filter(p => !paths.includes(p)));
     st.fresh.clear();
-    toast(id ? '수정했습니다.' : '레퍼런스를 저장했습니다.');
+    if (!id) notifyTeam('ref', res.data.id);
+    toast(id ? '수정했습니다.' : row.quiet ? '알림 없이 조용히 저장했습니다.' : '레퍼런스를 저장했습니다.');
     location.hash = '#/refs';
   };
   $('#del')?.addEventListener('click', async () => {
@@ -569,10 +577,10 @@ function visitFeed() {
   const f = S.visitFilter;
   const tabs = ['', ...CATS].map(c => `<button class="chip${f === c ? ' on' : ''}" data-cat="${esc(c)}">${c || '전체'}</button>`).join('');
   setView(`${header('답사기록', `<div class="row">${tabs}</div>`)}
-    ${installBanner()}
+    ${topBanner()}
     <div class="feed"><div id="list" style="display:flex;flex-direction:column;gap:16px"></div><div class="sentinel" id="sent"></div></div>
     <a class="fab" href="#/visits/new" aria-label="답사기록 작성">${ICON.pen()}</a>`, { tab: 'visits' });
-  bindInstall();
+  bindTopBanner();
   $$('[data-cat]').forEach(b => b.onclick = () => { S.visitFilter = b.dataset.cat; visitFeed(); });
   pager({
     list: $('#list'), sentinel: $('#sent'), size: 12,
@@ -593,11 +601,11 @@ async function visitDetail(id) {
   const [{ data: v, error }, { data: likes }, { data: comments }] = await Promise.all([
     sb.from('visits').select('*').eq('id', id).single(),
     sb.from('visit_likes').select('user_id').eq('visit_id', id),
-    sb.from('visit_comments').select('id,body,author_id,created_at').eq('visit_id', id).order('created_at'),
+    sb.from('visit_comments').select('id,body,author_id,created_at,parent_id').eq('visit_id', id).order('created_at'),
   ]);
   if (error || !v) { toast('답사기록을 찾을 수 없습니다.'); location.hash = '#/visits'; return; }
   const mine = v.author_id === S.me.id;
-  const st = { likes: new Set((likes || []).map(l => l.user_id)), comments: comments || [] };
+  const st = { likes: new Set((likes || []).map(l => l.user_id)), comments: comments || [], replyTo: null, quiet: false };
 
   const blocks = (v.blocks || []).map(b => b.t === 'img'
     ? (b.path === v.cover_path ? '' : `<button class="d-img" data-full="${esc(photoUrl(b.path))}"><img src="${esc(photoUrl(b.path))}" alt="" loading="lazy" data-fallback=""></button>`)
@@ -620,7 +628,9 @@ async function visitDetail(id) {
       <div class="likes"><button class="like" id="like"></button>
         <span class="like" style="cursor:default">${ICON.bubble()}<span id="ccount"></span></span>
         <span class="liked-by" id="likedBy"></span></div>
+      <div class="replying" id="replying" hidden></div>
       <form class="cin" id="cform"><label for="cmt" class="sr">댓글</label>
+        <button type="button" class="cquiet" id="cquiet" aria-pressed="false" aria-label="조용히 남기기" title="조용히 남기기 (알림 없이)">${ICON.bellOff()}</button>
         <input class="inp" id="cmt" placeholder="댓글을 남겨주세요" maxlength="1000" autocomplete="off" style="flex:1;min-width:0">
         <button class="btn-acc" id="csend">등록</button></form>
     </div></div>`);
@@ -636,22 +646,54 @@ async function visitDetail(id) {
     $('#likedBy').textContent = names.length ? (names.length > 2 ? `${names.slice(0, 2).join(', ')} 외 ${names.length - 2}명` : names.join(', ')) + '님이 좋아합니다' : '';
   };
   const drawComments = () => {
+    const byId = new Map(st.comments.map(c => [c.id, c]));
+    const rootOf = (c) => { let x = c, guard = 0; while (x.parent_id && byId.has(x.parent_id) && guard++ < 30) x = byId.get(x.parent_id); return x; };
+    const roots = st.comments.filter(c => !c.parent_id || !byId.has(c.parent_id));
+    const one = (c, reply) => {
+      const parent = c.parent_id && byId.get(c.parent_id);
+      const to = reply && parent && parent.id !== rootOf(c).id ? `<span class="to">${esc(person(parent.author_id).name)}님에게</span>` : '';
+      return `<div class="cmt${reply ? ' reply' : ''}" id="c${c.id}">${avatar(c.author_id)}<div class="cmt-main">
+        <div class="a-name">${esc(person(c.author_id).name)}<small>${fmtDate(c.created_at)}</small></div>
+        <p>${to}${esc(c.body)}</p>
+        <div class="cmt-acts"><button class="del" data-reply="${c.id}">답글</button>${c.author_id === S.me.id ? `<button class="del" data-del="${c.id}">삭제</button>` : ''}</div></div></div>`;
+    };
     $('#ccount').textContent = st.comments.length;
-    $('#cmts').innerHTML = `<div style="font-size:13px;font-weight:600">댓글 ${st.comments.length}</div>` + (st.comments.length
-      ? st.comments.map(c => `<div class="cmt">${avatar(c.author_id)}<div class="cmt-main">
-          <div class="a-name">${esc(person(c.author_id).name)}<small>${fmtDate(c.created_at)}</small>
-          ${c.author_id === S.me.id ? `<button class="del" data-del="${c.id}">삭제</button>` : ''}</div>
-          <p>${esc(c.body)}</p></div></div>`).join('')
+    $('#cmts').innerHTML = `<div style="font-size:13px;font-weight:600">댓글 ${st.comments.length}</div>` + (roots.length
+      ? roots.map(r => one(r, false) + st.comments.filter(c => c !== r && c.parent_id && rootOf(c) === r).map(c => one(c, true)).join('')).join('')
       : '<p class="note">첫 댓글을 남겨보세요.</p>');
-    $$('[data-del]').forEach(b => b.onclick = async () => {
-      if (!confirm('댓글을 삭제할까요?')) return;
+    $$('#cmts [data-reply]').forEach(b => b.onclick = () => {
+      st.replyTo = byId.get(Number(b.dataset.reply));
+      drawReplying();
+      $('#cmt').focus();
+    });
+    $$('#cmts [data-del]').forEach(b => b.onclick = async () => {
       const cid = Number(b.dataset.del);
+      const hasKids = st.comments.some(c => c.parent_id === cid);
+      if (!confirm(hasKids ? '댓글을 삭제할까요? 달린 답글도 함께 삭제됩니다.' : '댓글을 삭제할까요?')) return;
       const { error } = await sb.from('visit_comments').delete().eq('id', cid);
       if (error) return toast('삭제하지 못했습니다.');
-      st.comments = st.comments.filter(c => c.id !== cid);
+      const gone = new Set([cid]);
+      let grew = true;
+      while (grew) { grew = false; st.comments.forEach(c => { if (c.parent_id && gone.has(c.parent_id) && !gone.has(c.id)) { gone.add(c.id); grew = true; } }); }
+      st.comments = st.comments.filter(c => !gone.has(c.id));
+      if (st.replyTo && gone.has(st.replyTo.id)) { st.replyTo = null; drawReplying(); }
       drawComments();
     });
   };
+  const drawReplying = () => {
+    const box = $('#replying');
+    box.hidden = !st.replyTo;
+    box.innerHTML = st.replyTo ? `<span><b>${esc(person(st.replyTo.author_id).name)}</b>님에게 답글 남기는 중</span><button type="button" class="link-btn" id="replyX">취소</button>` : '';
+    $('#replyX')?.addEventListener('click', () => { st.replyTo = null; drawReplying(); });
+    drawCinPlaceholder();
+  };
+  const drawCinPlaceholder = () => {
+    $('#cmt').placeholder = `${st.quiet ? '조용히 ' : ''}${st.replyTo ? '답글을' : '댓글을'} 남겨주세요`;
+    const q = $('#cquiet');
+    q.classList.toggle('on', st.quiet);
+    q.setAttribute('aria-pressed', st.quiet);
+  };
+  $('#cquiet').onclick = () => { st.quiet = !st.quiet; drawCinPlaceholder(); toast(st.quiet ? '알림 없이 조용히 남깁니다.' : '알림과 함께 남깁니다.'); };
   drawLikes(); drawComments();
 
   $('#like').onclick = async () => {
@@ -668,13 +710,18 @@ async function visitDetail(id) {
     const body = $('#cmt').value.trim();
     if (!body) return;
     $('#csend').disabled = true;
-    const { data, error } = await sb.from('visit_comments').insert({ visit_id: id, body }).select('id,body,author_id,created_at').single();
+    const { data, error } = await sb.from('visit_comments')
+      .insert({ visit_id: id, body, parent_id: st.replyTo?.id || null, quiet: st.quiet })
+      .select('id,body,author_id,created_at,parent_id').single();
     $('#csend').disabled = false;
     if (error) return toast('댓글을 등록하지 못했습니다.');
+    notifyTeam('comment', data.id);
     $('#cmt').value = '';
     st.comments.push(data);
+    st.replyTo = null;
+    drawReplying();
     drawComments();
-    $('#cmts').lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.getElementById(`c${data.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
   $$('[data-full]').forEach(b => b.onclick = () => openViewer(b.dataset.full));
   $('#menu')?.addEventListener('click', () => sheet(`<button data-act="edit">수정하기</button><button data-act="del" class="red">삭제하기</button>`, async (act) => {
@@ -750,6 +797,7 @@ async function visitForm(id) {
         <div class="lbl" style="display:flex;justify-content:space-between"><span style="color:inherit;font-weight:600">본문</span><span>사진의 ‘대표’를 눌러 피드 대표사진 지정</span></div>
         <div class="blocks" id="blocks"></div>
       </div>
+      ${id ? '' : quietRow('vquiet')}
     </div>
     <div class="toolbar"><div class="toolbar-in">
       <label class="tool" for="files">${ICON.camera()}사진 추가</label>
@@ -865,12 +913,14 @@ async function visitForm(id) {
       .map(b => b.t === 'img' ? { t: 'img', path: b.path } : { t: 'text', v: b.v.trim() });
     const paths = blocks.filter(b => b.t === 'img').map(b => b.path);
     const row = { category: st.category, title: st.title.trim(), place: st.place.trim() || null, visited_on: st.visited_on || null, blocks, cover_path: paths.includes(st.cover) ? st.cover : (paths[0] || null) };
+    if (!id) row.quiet = !!$('#vquiet')?.checked;
     e.currentTarget.disabled = true;
     const res = id ? await sb.from('visits').update(row).eq('id', id).select('id').single() : await sb.from('visits').insert(row).select('id').single();
     if (res.error) { e.currentTarget.disabled = false; console.error(res.error); return toast('저장하지 못했습니다. 다시 시도해주세요.'); }
     removePhotos(st.original.filter(p => !paths.includes(p)));
     st.fresh.clear();
-    toast(id ? '수정했습니다.' : '답사기록을 등록했습니다.');
+    if (!id) notifyTeam('visit', res.data.id);
+    toast(id ? '수정했습니다.' : row.quiet ? '알림 없이 조용히 등록했습니다.' : '답사기록을 등록했습니다.');
     location.hash = `#/visits/${res.data.id}`;
   };
 
@@ -886,6 +936,7 @@ function mePage() {
       <div class="card"><div class="me-row">${avatar(S.me.id)}<div><div style="font-size:17px;font-weight:700">${esc(S.me.name)}</div><div class="note">${esc(S.me.email)}</div></div></div></div>
       <div class="card"><div class="lbl" style="margin:0">함께 쓰는 팀원 ${members.length}명</div>
         <div class="members">${members.map(p => `<span class="tag" style="font-size:12px">${esc(p.name)}</span>`).join('')}</div></div>
+      <div class="card"><div class="lbl" style="margin:0">알림</div><div id="notifBody"><p class="note">불러오는 중…</p></div></div>
       <div class="card" style="padding:4px 16px">
         <button class="list-btn" id="how">홈 화면에 앱으로 추가하는 방법 <span class="note">›</span></button>
         <button class="list-btn" id="logout" style="color:var(--danger)">로그아웃</button>
@@ -893,7 +944,8 @@ function mePage() {
       <p class="note" style="text-align:center"><span class="serif" style="font-size:15px">Brand Scrapbook</span> · 브랜드전략팀</p>
     </div>`);
   $('#how').onclick = showInstallHelp;
-  $('#logout').onclick = async () => { if (!confirm('로그아웃할까요?')) return; await sb.auth.signOut(); entered = false; S.session = null; showLogin(); };
+  drawNotifSettings();
+  $('#logout').onclick = async () => { if (!confirm('로그아웃할까요?')) return; await disablePush().catch(() => {}); await sb.auth.signOut(); entered = false; S.session = null; showLogin(); };
 }
 
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -920,8 +972,194 @@ function showInstallHelp() {
     : `<h3>안드로이드에서 추가하기</h3><p>${inApp ? '지금은 카카오톡 안에서 열려 있어요. 오른쪽 위 <b>⋮ → 다른 브라우저로 열기</b>로 크롬에서 연 뒤 진행해주세요.<br><br>' : ''}1. 크롬 오른쪽 위 <b>⋮ 메뉴</b>를 누릅니다.<br>2. <b>앱 설치</b> 또는 <b>홈 화면에 추가</b>를 누릅니다.<br>3. 설치 후에는 카톡에서 링크를 <b>공유 → 스크랩북</b>으로 바로 보낼 수 있습니다.</p><button data-act="ok">확인</button>`);
 }
 
+// ───────────────────────── 알림 ─────────────────────────
+// 업무시간: 평일 09:00~19:00 (한국 시간). 그 밖에 올린 글의 알림은 다음 평일 오전 9시에 모아서 갑니다.
+function isBusinessHours(date = new Date()) {
+  const kst = new Date(date.getTime() + 9 * 3600e3);
+  const day = kst.getUTCDay(), hour = kst.getUTCHours();
+  return day >= 1 && day <= 5 && hour >= 9 && hour < 19;
+}
+
+function quietRow(id) {
+  return `<div class="quiet-box">
+    <label class="set-row" for="${id}"><span><b>조용히 올리기</b><small>팀원에게 푸시 알림 없이 올립니다. 알림함에는 표시돼요.</small></span>
+      <input type="checkbox" id="${id}" class="switch"></label>
+    ${isBusinessHours() ? '' : '<p class="note" style="margin-top:8px">지금은 업무시간 외라, 알림은 다음 평일 오전 9시에 모아서 전달됩니다.</p>'}
+  </div>`;
+}
+
+// 글·댓글을 올린 뒤 서버에 알림 발송을 요청 (실패해도 등록에는 영향 없음)
+async function notifyTeam(type, id) {
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    await fetch('/api/notify', {
+      method: 'POST', keepalive: true,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+      body: JSON.stringify({ type, id }),
+    });
+  } catch { /* noop */ }
+}
+
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const b64ToBytes = (s) => {
+  const pad = '='.repeat((4 - (s.length % 4)) % 4);
+  const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, c => c.charCodeAt(0));
+};
+async function saveSub(sub) {
+  const j = sub.toJSON();
+  return sb.from('push_subscriptions').upsert(
+    { user_id: S.me.id, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, ua: navigator.userAgent.slice(0, 200) },
+    { onConflict: 'endpoint' },
+  );
+}
+async function currentSub() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+async function enablePush() {
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error(perm === 'denied' ? '알림이 차단되어 있어요. 휴대폰 설정에서 이 앱의 알림을 허용해주세요.' : '알림 허용이 필요합니다.');
+  const reg = await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription()) ||
+    (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC_KEY) }));
+  const { error } = await saveSub(sub);
+  if (error) throw new Error('알림 등록을 저장하지 못했습니다.');
+}
+async function disablePush() {
+  const sub = await currentSub();
+  if (!sub) return;
+  await sb.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+  await sub.unsubscribe().catch(() => {});
+}
+function pushBlockedReason() {
+  if (!pushSupported()) {
+    return isIOS() && !isStandalone()
+      ? '아이폰은 홈 화면에 추가한 스크랩북 앱에서 알림을 켤 수 있어요.'
+      : '이 브라우저에서는 푸시 알림을 받을 수 없어요. 홈 화면에 추가한 앱이나 크롬에서 열어주세요.';
+  }
+  if (Notification.permission === 'denied') return '알림이 차단되어 있어요. 휴대폰 설정 > 알림에서 스크랩북을 허용해주세요.';
+  return '';
+}
+
+async function refreshBell() {
+  try {
+    const { count } = await sb.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null);
+    S.unread = count || 0;
+  } catch { /* noop */ }
+  const el = document.getElementById('bellBadge');
+  if (el) { el.hidden = !S.unread; el.textContent = S.unread > 99 ? '99+' : String(S.unread); }
+  try {
+    if (S.unread && navigator.setAppBadge) navigator.setAppBadge(S.unread);
+    else if (navigator.clearAppBadge) navigator.clearAppBadge();
+  } catch { /* noop */ }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.session) refreshBell(); });
+
+function alertText(n) {
+  const who = `<b>${esc(person(n.actor_id).name)}</b>님이`;
+  switch (n.kind) {
+    case 'new_ref': return { html: `${who} 새 레퍼런스를 올렸어요`, url: `#/refs/${n.ref_id}` };
+    case 'new_visit': return { html: `${who} 새 답사기록을 올렸어요`, url: `#/visits/${n.visit_id}` };
+    case 'comment': return { html: `${who} 내 답사기록에 댓글을 남겼어요`, url: `#/visits/${n.visit_id}` };
+    case 'reply': return { html: `${who} 내 댓글에 답글을 남겼어요`, url: `#/visits/${n.visit_id}` };
+    default: return { html: '새 소식이 있어요', url: '#/refs' };
+  }
+}
+
+async function alertsPage() {
+  setView(`<div class="bar"><a class="icon-btn" href="#/refs" aria-label="뒤로">${ICON.back()}</a><div class="bar-t">알림</div>
+      <button class="link-btn" id="readAll" style="margin-right:8px">모두 읽음</button></div>
+    <div class="alerts" id="alerts"><div class="loading">불러오는 중…</div></div>`);
+  const draw = async () => {
+    const { data, error } = await sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(60);
+    if (error) { $('#alerts').innerHTML = '<div class="loading">알림을 불러오지 못했습니다.</div>'; return; }
+    $('#readAll').hidden = !(data || []).some(n => !n.read_at);
+    $('#alerts').innerHTML = (data || []).length
+      ? data.map(n => {
+        const t = alertText(n);
+        return `<a class="alert${n.read_at ? '' : ' unread'}" href="${t.url}" data-id="${n.id}">
+          ${avatar(n.actor_id)}
+          <div class="alert-main"><p>${t.html}</p>${n.text ? `<span class="alert-snip">${esc(n.text)}</span>` : ''}
+            <small>${fmtDate(n.created_at)}${n.quiet ? ' · 조용히 올림' : ''}</small></div>
+          ${n.read_at ? '' : '<span class="dot" aria-label="읽지 않음"></span>'}</a>`;
+      }).join('') + '<p class="note" style="text-align:center;padding:20px 0">최근 60개까지 보여드려요 · <a href="#/me">알림 설정</a></p>'
+      : `<div class="empty"><b>아직 알림이 없어요</b>팀원이 새 글을 올리거나 내 글에 댓글이 달리면<br>여기에 모아서 보여드려요.<a class="link-btn" href="#/me">알림 설정 보기</a></div>`;
+    $$('#alerts [data-id]').forEach(a => a.addEventListener('click', () => {
+      sb.from('notifications').update({ read_at: new Date().toISOString() }).eq('id', Number(a.dataset.id)).is('read_at', null).then(() => refreshBell());
+    }));
+  };
+  $('#readAll').onclick = async () => {
+    await sb.from('notifications').update({ read_at: new Date().toISOString() }).is('read_at', null);
+    await draw();
+    refreshBell();
+  };
+  await draw();
+}
+
+async function drawNotifSettings() {
+  const box = document.getElementById('notifBody');
+  if (!box) return;
+  const blocked = pushBlockedReason();
+  let subscribed = false;
+  try { subscribed = !blocked && Notification.permission === 'granted' && !!(await currentSub()); } catch { /* noop */ }
+  const { data } = await sb.from('notify_prefs').select('*').eq('user_id', S.me.id).limit(1);
+  const pref = { new_posts: true, reactions: true, ...(data?.[0] || {}) };
+  box.innerHTML = `
+    <label class="set-row" for="pushSw"><span><b>이 기기로 푸시 알림 받기</b><small>${blocked ? esc(blocked) : '잠금화면에 알림이 떠요. 기기마다 따로 켭니다.'}</small></span>
+      <input type="checkbox" id="pushSw" class="switch" ${subscribed ? 'checked' : ''} ${blocked ? 'disabled' : ''}></label>
+    <label class="set-row" for="pfNew"><span><b>새 레퍼런스·답사기록</b><small>팀원이 새 글을 올렸을 때</small></span>
+      <input type="checkbox" id="pfNew" class="switch" ${pref.new_posts ? 'checked' : ''}></label>
+    <label class="set-row" for="pfReact"><span><b>내 글 댓글 · 내 댓글 답글</b><small>내 답사기록에 댓글, 내 댓글에 답글이 달렸을 때</small></span>
+      <input type="checkbox" id="pfReact" class="switch" ${pref.reactions ? 'checked' : ''}></label>
+    <p class="note" style="margin-top:10px">업무시간(평일 9~19시) 외에 올라온 글은 다음 평일 오전 9시에 모아서 알려드려요. 조용히 올린 글은 알림함에만 표시됩니다.</p>`;
+  $('#pushSw').onchange = async (e) => {
+    const on = e.target.checked;
+    e.target.disabled = true;
+    try {
+      if (on) { await enablePush(); toast('이 기기에서 알림을 받습니다.'); }
+      else { await disablePush(); toast('이 기기의 알림을 껐습니다.'); }
+    } catch (err) {
+      e.target.checked = !on;
+      toast(err.message || '알림 설정을 바꾸지 못했습니다.');
+    }
+    e.target.disabled = false;
+  };
+  const savePref = async () => {
+    const row = { user_id: S.me.id, new_posts: $('#pfNew').checked, reactions: $('#pfReact').checked, updated_at: new Date().toISOString() };
+    const { error } = await sb.from('notify_prefs').upsert(row, { onConflict: 'user_id' });
+    toast(error ? '설정을 저장하지 못했습니다.' : '알림 설정을 저장했습니다.');
+  };
+  $('#pfNew').onchange = savePref;
+  $('#pfReact').onchange = savePref;
+}
+
+function topBanner() {
+  if (!isStandalone()) return installBanner();
+  if (pushSupported() && Notification.permission === 'default' && store.get('pushAskHidden') !== '1') {
+    return `<div class="install" id="pushAsk"><span>새 글과 내 글 댓글을 <b>알림</b>으로 받아보세요.</span>
+      <button class="go" id="pushGo">알림 켜기</button><button class="x" id="pushX" aria-label="닫기">${ICON.close()}</button></div>`;
+  }
+  return '';
+}
+function bindTopBanner() {
+  bindInstall();
+  $('#pushGo')?.addEventListener('click', async () => {
+    try { await enablePush(); toast('알림을 켰습니다. 내 정보에서 언제든 바꿀 수 있어요.'); $('#pushAsk')?.remove(); }
+    catch (err) { toast(err.message || '알림을 켜지 못했습니다.'); }
+  });
+  $('#pushX')?.addEventListener('click', () => { store.set('pushAskHidden', '1'); $('#pushAsk')?.remove(); });
+}
+
 // ───────────────────────── 시작 ─────────────────────────
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  // 알림을 눌렀을 때 이미 열린 앱이면 그 화면으로 이동
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.type === 'open' && e.data.url) { const u = new URL(e.data.url); location.hash = u.hash || '#/alerts'; }
+  });
+}
 
 (async () => {
   // 공유로 들어온 링크는 로그인 후에 이어서 처리

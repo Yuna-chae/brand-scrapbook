@@ -4,5 +4,10 @@
   "version": "1.0.0",
   "description": "브랜드전략팀 레퍼런스·답사기록 아카이브 (브랜드 스크랩북)",
   "type": "module",
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
 }

@@ -1,5 +1,5 @@
 // 앱 화면 파일만 캐시해 빠르게 열고, 데이터(Supabase·API)는 항상 새로 받습니다.
-const CACHE = 'scrapbook-v1';
+const CACHE = 'scrapbook-v2';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/config.js', '/vendor/supabase.js', '/manifest.webmanifest', '/icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
@@ -22,4 +22,33 @@ self.addEventListener('fetch', (e) => {
       })
       .catch(() => caches.match(e.request).then(r => r || caches.match('/index.html')))
   );
+});
+
+// ───────── 푸시 알림 ─────────
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(d.title || '브랜드 스크랩북', {
+    body: d.body || '',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/badge-96.png',
+    tag: d.tag,
+    data: { url: d.url || '/#/alerts' },
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || '/#/alerts', self.location.origin).href;
+  e.waitUntil((async () => {
+    const list = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of list) {
+      if (new URL(c.url).origin === self.location.origin) {
+        await c.focus();
+        try { await c.navigate(url); } catch { c.postMessage({ type: 'open', url }); }
+        return;
+      }
+    }
+    await self.clients.openWindow(url);
+  })());
 });

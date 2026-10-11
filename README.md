@@ -76,3 +76,25 @@ Supabase **Authentication → URL Configuration**에서 설정합니다.
 - 인스타그램, 일부 언론사처럼 외부 접근을 막는 사이트는 요약이 비어 나올 수 있으며, 직접 입력하면 됩니다.
 - AI 요약 모델은 기본 `gemini-2.5-flash`입니다. 바꾸려면 Vercel 환경 변수에 `GEMINI_MODEL`을 추가합니다.
 - 글·레퍼런스·댓글의 수정과 삭제는 작성자 본인만 할 수 있습니다.
+
+## 업데이트 기록 (DB)
+
+새로 설치할 때는 `supabase/schema.sql` 실행 후 `supabase/updates/` 안의 파일을 날짜 순서대로 실행합니다.
+
+| 파일 | 내용 |
+|---|---|
+| `2026-10-08_refs_photos.sql` | 링크 없이 사진·내용으로 레퍼런스 등록 |
+| `2026-10-11_notifications.sql` | 알림함·푸시 알림, 조용히 올리기, 답글 |
+
+## 알림 설정 (Vercel 환경 변수)
+
+| 이름 | 값 |
+|---|---|
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase > Project Settings > API Keys > Legacy API keys의 `service_role` 키 (외부 공유 금지) |
+| `VAPID_PUBLIC_KEY` | 푸시용 공개 키 (`public/config.js`의 값과 같아야 함) |
+| `VAPID_PRIVATE_KEY` | 푸시용 비공개 키 (외부 공유 금지) |
+| `CRON_SECRET` | 오전 9시 모아 보내기 호출 보호용 임의 문자열 |
+
+- 업무시간(평일 9~19시)에 올라온 글·댓글은 바로 푸시, 그 외 시간은 다음 평일 오전 9시에 사람별로 묶어서 보냅니다 (`vercel.json`의 crons).
+- 조용히 올린 글·댓글은 푸시 없이 알림함에만 표시됩니다.
+- 아이폰은 홈 화면에 추가한 앱에서 '내 정보 > 알림'을 켜야 받을 수 있습니다.

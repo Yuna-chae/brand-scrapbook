@@ -239,3 +239,38 @@ h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.02em; text-
 .ph-rm { position: absolute; top: 3px; right: 3px; width: 26px; height: 26px; border-radius: 13px; border: 0; background: var(--shade); display: flex; align-items: center; justify-content: center; padding: 0; }
 .ph-rm svg { width: 14px; height: 14px; }
 .ph.addph { border: 1px dashed var(--sub); background: var(--surface); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 11.5px; color: var(--sub); cursor: pointer; }
+
+/* 알림 · 조용히 올리기 · 답글 */
+.hdr-actions { display: flex; align-items: center; gap: 6px; }
+.bell { position: relative; width: 40px; height: 40px; border-radius: 20px; display: flex; align-items: center; justify-content: center; color: var(--fg); text-decoration: none; }
+.bell-badge { position: absolute; top: 2px; left: 23px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--like); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; border: 2px solid var(--surface); box-sizing: content-box; }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.set-row:first-child { border-top: 0; }
+.set-row span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.set-row b { font-size: 14.5px; font-weight: 600; }
+.set-row small { font-size: 12px; color: var(--sub); line-height: 1.5; }
+.switch { appearance: none; -webkit-appearance: none; flex: none; width: 48px; height: 28px; border-radius: 14px; background: var(--line); position: relative; cursor: pointer; transition: background .2s; margin: 0; }
+.switch::before { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform .2s; }
+.switch:checked { background: var(--accent); }
+.switch:checked::before { transform: translateX(20px); }
+.switch:disabled { opacity: .45; cursor: not-allowed; }
+.quiet-box { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 2px 14px 12px; }
+.write .quiet-box { background: var(--bg); }
+.replying { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--sub); background: var(--accent-soft); border-radius: 10px; padding: 4px 6px 4px 12px; margin-bottom: 6px; }
+.replying b { color: var(--accent); }
+.cquiet { width: 44px; height: 44px; flex: none; border-radius: 22px; border: 1px solid var(--line); background: var(--surface); color: var(--sub); display: flex; align-items: center; justify-content: center; padding: 0; }
+.cquiet.on { background: var(--fg); border-color: var(--fg); color: var(--surface); }
+.cmt.reply { margin-left: 42px; }
+.cmt.reply .av { width: 26px; height: 26px; font-size: 11px; }
+.cmt-acts { display: flex; gap: 2px; margin-left: -4px; }
+.cmt p .to { color: var(--accent); font-weight: 600; margin-right: 4px; }
+.detail { padding-bottom: calc(190px + var(--safe-b)); }
+.alerts { display: flex; flex-direction: column; padding: 4px 0 calc(40px + var(--safe-b)); }
+.alert { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; text-decoration: none; color: inherit; border-bottom: 1px solid var(--line); background: var(--surface); }
+.alert.unread { background: var(--accent-soft); }
+.alert .av { width: 36px; height: 36px; }
+.alert-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.alert-main p { margin: 0; font-size: 14px; line-height: 1.5; }
+.alert-snip { font-size: 13px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.alert-main small { font-size: 11.5px; color: var(--sub); }
+.alert .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--accent); flex: none; margin-top: 8px; }
